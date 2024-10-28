@@ -103,8 +103,96 @@ void VisionCnnNode::subscriberThread()
 
 void VisionCnnNode::publisherThread()
 {
- 
-   
+    std::string rectImgTopic;
+    std::string rectImgFrame;
+    std::string outTensorTopic;
+    bool        status;
+    bool        latch = true;
+
+    status = get_parameter("rectified_image_topic", rectImgTopic);
+    if (status == false)
+    {
+        RCLCPP_ERROR(get_logger(), "Config parameter 'rectified_image_topic' not found.");
+        exit(-1);
+    }
+
+    status = get_parameter("rectified_image_frame_id", rectImgFrame);
+    if (status == false)
+    {
+        RCLCPP_ERROR(get_logger(), "Config parameter 'rectified_image_frame_id' not found.");
+        exit(-1);
+    }
+
+    // rectified image in YUV420 (NV12)
+    m_rectImageSize = 1.5 * m_inputImgWidth * m_inputImgHeight;
+    m_rectImagePubData.data.assign(m_rectImageSize, 0);
+    m_rectImagePubData.width    = m_inputImgWidth;
+    m_rectImagePubData.height   = m_inputImgHeight;
+    m_rectImagePubData.step     = m_inputImgWidth;
+    m_rectImagePubData.encoding = "yuv420";
+    m_rectImagePubData.header.frame_id = rectImgFrame;
+
+    // Create the publisher for the rectified image
+    m_rectImgPub = m_imgTrans->advertise(rectImgTopic, latch);
+    RCLCPP_INFO(get_logger(), "Created Publisher for topic: %s", rectImgTopic.c_str());
+
+    status = get_parameter("vision_cnn_tensor_topic", outTensorTopic);
+    if (status == false)
+    {
+        RCLCPP_ERROR(get_logger(), "Config parameter 'vision_cnn_tensor_topic' not found.");
+        exit(-1);
+    }
+
+    m_outTensorSize = m_cntxt->outTensorSize;
+    m_outTensorPubData.data.assign(m_outTensorSize, 0);
+    m_outTensorPubData.width    = m_outImgWidth;
+    m_outTensorPubData.height   = m_outImgHeight;
+    m_outTensorPubData.step     = m_outImgWidth;
+    m_outTensorPubData.encoding = "mono8";
+
+    m_taskType = m_cntxt->postProcObj->getTaskType();
+
+    if (m_taskType == "segmentation")
+    {
+        // Create the publisher for the output tensor
+        m_outTensorPub = m_imgTrans->advertise(outTensorTopic, latch);
+    }
+    else if (m_taskType == "object_6d_pose_estimation")
+    {
+        m_posePub = this->create_publisher<Pose6D>(outTensorTopic, 1);
+    }
+    else if (m_taskType == "keypoint_detection")
+    {
+        m_human_posePub = this->create_publisher<HumanPose>(outTensorTopic, 1);
+    }
+    else if (m_taskType == "detection")
+    {
+        // Create the publisher for the rectified image
+        m_odPub = this->create_publisher<Detection2D>(outTensorTopic, 1);
+    }
+    else
+    {
+        RCLCPP_ERROR(get_logger(), "Unsupported taskType");
+        exit(-1);
+    }
+
+    RCLCPP_INFO(get_logger(),
+                "Created Publisher for topic: %s",
+                outTensorTopic.c_str());
+
+    // To gauranttee all publisher objects are set up before running
+    // subscriberThread()
+    // launch the subscriber thread
+    auto subThread = std::thread([this]{subscriberThread();});
+    subThread.detach();
+
+    // Start processing the output from the inference chain
+    processCompleteEvtHdlr();
+
+    // Shutdown the publishers
+    m_rectImgPub.shutdown();
+
+    m_outTensorPub.shutdown();
 }
 
 
