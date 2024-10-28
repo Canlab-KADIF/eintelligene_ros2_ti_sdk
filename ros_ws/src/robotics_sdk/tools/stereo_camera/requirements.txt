@@ -1,0 +1,6 @@
+# Run below to install dependencies
+# python3 -m pip install -r requirements.txt
+opencv-python<4.3 # 3.4.18.65 in Ubuntu 22.04
+configparser
+argparse
+numpy<2
