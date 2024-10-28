@@ -195,6 +195,20 @@ void VisionCnnNode::publisherThread()
     m_outTensorPub.shutdown();
 }
 
+void VisionCnnNode::imgCb(const Image::ConstSharedPtr& imgPtr)
+{
+    if (m_cntxt->state == VISION_CNN_STATE_INIT)
+    {
+        uint64_t nanoSec = imgPtr->header.stamp.sec * 1e9 +
+                           imgPtr->header.stamp.nanosec;
+
+        VISION_CNN_run(m_cntxt, imgPtr->data.data(), nanoSec);
+    }
+    else
+    {
+        m_conObj.disconnect();
+    }
+}
 
 VisionCnnNode::~VisionCnnNode()
 {
