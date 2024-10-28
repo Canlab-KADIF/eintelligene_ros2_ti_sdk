@@ -562,8 +562,12 @@ vx_status VisionCnnNode::init()
     if (vxStatus == (vx_status)VX_SUCCESS)
     {
         /* Read the node parameters. */
-        readParams();
+        int state = readParams();
 
+        if(!state){
+            RCLCPP_ERROR(get_logger(), "VISION_CNN_init() failed.");
+        }
+        
         /* Initialize the Application context */
         vxStatus = VISION_CNN_init(m_cntxt);
 
