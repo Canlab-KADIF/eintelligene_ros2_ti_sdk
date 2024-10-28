@@ -210,6 +210,184 @@ void VisionCnnNode::imgCb(const Image::ConstSharedPtr& imgPtr)
     }
 }
 
+void VisionCnnNode::processCompleteEvtHdlr()
+{
+    RCLCPP_INFO(get_logger(), "%s Launched.", __FUNCTION__);
+
+    while (m_cntxt->exitOutputThread == false)
+    {
+        vx_reference    outRef{};
+        vx_status       vxStatus;
+
+        /* Wait for the data ready semaphore. */
+        if (m_cntxt->outputCtrlSem)
+        {
+            m_cntxt->outputCtrlSem->wait();
+        }
+
+        if (m_cntxt->exitOutputThread == true)
+        {
+            break;
+        }
+
+        VISION_CNN_getOutBuff(m_cntxt,
+                             &m_cntxt->vxInputDisplayImage,
+                             &outRef,
+                             &m_cntxt->outTimestamp);
+
+        // Extract rectified right image data (YUV420 or NV12)
+        vxStatus = CM_extractImageData(m_rectImagePubData.data.data(),
+                                       m_cntxt->vxInputDisplayImage,
+                                       m_rectImagePubData.width,
+                                       m_rectImagePubData.height,
+                                       2,
+                                       0);
+
+        if (vxStatus != (vx_status)VX_SUCCESS)
+        {
+            RCLCPP_ERROR(get_logger(),
+                         "CM_extractImageData() failed.");
+        }
+
+        // Extract raw tensor data
+        vxStatus = CM_extractTensorData(m_outTensorPubData.data.data(),
+                                        (vx_tensor)outRef,
+                                        m_outTensorSize);
+
+        if (vxStatus != (vx_status)VX_SUCCESS)
+        {
+            RCLCPP_ERROR(get_logger(), "CM_extractTensorData() failed.");
+        }
+
+        // Release the output buffers
+        VISION_CNN_releaseOutBuff(m_cntxt);
+
+        if (vxStatus == (vx_status)VX_SUCCESS)
+        {
+            rclcpp::Time time = this->get_clock()->now();
+
+            // Publish Rectified (Right) image
+            m_rectImagePubData.header.stamp = time;
+            m_rectImgPub.publish(m_rectImagePubData);
+
+            // Publish output tensor
+            if (m_taskType == "segmentation")
+            {
+                m_outTensorPubData.header.stamp = time;
+                m_outTensorPub.publish(m_outTensorPubData);
+            }
+            else if (m_taskType == "object_6d_pose_estimation")
+            {
+                float          *data;
+                Pose6D          pose;
+
+                data              = reinterpret_cast<float *>(m_outTensorPubData.data.data());
+                pose.header.stamp = time;
+
+                pose.img_width = static_cast<int32_t>(*data++);
+                pose.img_height = static_cast<int32_t>(*data++);
+
+                pose.num_objects  = static_cast<int32_t>(*data++);
+                pose.bounding_boxes.assign(pose.num_objects, BoundingBox2D{});
+                pose.transform_matrix.assign(pose.num_objects, Transform{});
+
+
+                for (int32_t i = 0; i < pose.num_objects; i++)
+                {
+
+                    auto &box = pose.bounding_boxes[i];
+                    auto &mat = pose.transform_matrix[i];
+
+                    box.xmin       = static_cast<int32_t>(*data++);
+                    box.ymin       = static_cast<int32_t>(*data++);
+                    box.xmax       = static_cast<int32_t>(*data++);
+                    box.ymax       = static_cast<int32_t>(*data++);
+                    box.confidence = *data++;
+                    box.label_id   = static_cast<int32_t>(*data++);
+
+                    mat.rot1_x = *data++;
+                    mat.rot1_y = *data++;
+                    mat.rot1_z = *data++;
+
+                    mat.rot2_x = *data++;
+                    mat.rot2_y = *data++;
+                    mat.rot2_z = *data++;
+
+                    mat.trans_x = *data++;
+                    mat.trans_y = *data++;
+                    mat.trans_z = *data;
+
+                }
+
+                m_posePub->publish(pose);
+            }
+            else if (m_taskType == "keypoint_detection")
+            {
+                float          *data;
+                HumanPose       pose;
+                int             total_kps = 17;
+                int             steps = 3;
+                int             total_value = total_kps * steps;
+
+                data              = reinterpret_cast<float *>(m_outTensorPubData.data.data());
+                pose.header.stamp = time;
+
+                pose.img_width  = static_cast<int32_t>(*data++);
+                pose.img_height = static_cast<int32_t>(*data++);
+
+                pose.num_objects  = static_cast<int32_t>(*data++);
+                pose.bounding_boxes.assign(pose.num_objects, BoundingBox2D{});
+                pose.keypoint.assign(pose.num_objects * total_value, float{});
+
+                for (int32_t i = 0; i < pose.num_objects; i++)
+                {
+
+                    auto &box = pose.bounding_boxes[i];
+
+                    box.xmin       = static_cast<int32_t>(*data++);
+                    box.ymin       = static_cast<int32_t>(*data++);
+                    box.xmax       = static_cast<int32_t>(*data++);
+                    box.ymax       = static_cast<int32_t>(*data++);
+                    box.confidence = *data++;
+                    box.label_id   = static_cast<int32_t>(*data++);
+
+                    for (int32_t j = 0; j < total_value ; j++)
+                    {
+                        pose.keypoint[i* total_value + j] = *data++;
+                    }
+                }
+                m_human_posePub->publish(pose);
+            }
+            else // m_taskType == "detection"
+            {
+                float          *data;
+                Detection2D     det;
+
+                data             = reinterpret_cast<float *>(m_outTensorPubData.data.data());
+                det.header.stamp = time;
+                det.num_objects  = static_cast<int32_t>(*data++);
+                det.bounding_boxes.assign(det.num_objects, BoundingBox2D{});
+
+                for (int32_t i = 0; i < det.num_objects; i++)
+                {
+                    auto &box = det.bounding_boxes[i];
+
+                    box.xmin       = static_cast<int32_t>(*data++);
+                    box.ymin       = static_cast<int32_t>(*data++);
+                    box.xmax       = static_cast<int32_t>(*data++);
+                    box.ymax       = static_cast<int32_t>(*data++);
+                    box.label_id   = static_cast<int32_t>(*data++);
+                    box.confidence = *data++;
+                }
+
+                m_odPub->publish(det);
+            }
+        }
+    }
+
+    RCLCPP_INFO(get_logger(), "%s Exiting.", __FUNCTION__);
+}
+
 VisionCnnNode::~VisionCnnNode()
 {
    
