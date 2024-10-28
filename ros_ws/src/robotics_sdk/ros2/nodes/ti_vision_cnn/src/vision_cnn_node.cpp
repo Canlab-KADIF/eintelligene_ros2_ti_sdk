@@ -70,7 +70,31 @@ VisionCnnNode::VisionCnnNode(const rclcpp::NodeOptions &options,
                              const std::string         &name):
     Node(name, options)
 {
- 
+    vx_status   vxStatus;
+
+    // Initialize the CNN context
+    vxStatus = this->init();
+
+    if (vxStatus != (vx_status)VX_SUCCESS)
+    {
+        RCLCPP_INFO(get_logger(), "Application Initialization failed.");
+        exit(-1);
+    }
+
+    m_imgTrans = new ImgTrans(this->create_sub_node("image_transport"));
+
+    // Cache the input and output image sizes
+    m_inputImgWidth  = m_cntxt->inputImageWidth;
+    m_inputImgHeight = m_cntxt->inputImageHeight;
+    m_outImgWidth    = m_cntxt->outImageWidth;
+    m_outImgHeight   = m_cntxt->outImageHeight;
+
+    // launch the publisher threads
+    auto pubThread = std::thread([this]{publisherThread();});
+    pubThread.detach();
+
+    // register a callback to run at rclcpp::shutdown()
+    rclcpp::on_shutdown(std::bind(&VisionCnnNode::onShutdown, this));
 
 }
 
@@ -390,15 +414,178 @@ void VisionCnnNode::processCompleteEvtHdlr()
 
 VisionCnnNode::~VisionCnnNode()
 {
-   
+    if (m_imgTrans)
+    {
+        delete m_imgTrans;
+    }
+
+    if (m_sub)
+    {
+        delete m_sub;
+    }
+
+    if (m_cntxt)
+    {
+        delete m_cntxt;
+    }
+}
+
+void VisionCnnNode::readParams()
+{
+    std::string                     str;
+    bool                            status;
+    int32_t                         tmp;
+    float                           thres;
+
+    /* Get LUT file path information. */
+    status = get_parameter("lut_file_path", str);
+
+    // RCLCPP_INFO(get_logger(), "lut_file_path = %s", str.c_str());
+
+    if (status == false)
+    {
+        RCLCPP_INFO(get_logger(), "Config parameter 'lut_file_path' not found.");
+        exit(-1);
+    }
+
+    snprintf(m_cntxt->ldcLutFilePath, VISION_CNN_MAX_LINE_LEN-1, "%s", str.c_str());
+
+    /* Get TIDL network path information. */
+    status = get_parameter("dl_model_path", str);
+
+    if (status == false)
+    {
+        RCLCPP_INFO(get_logger(), "Config parameter 'dl_model_path' not found.");
+        exit(-1);
+    }
+
+    snprintf(m_cntxt->dlModelPath, VISION_CNN_MAX_LINE_LEN-1, "%s", str.c_str());
+    RCLCPP_INFO(get_logger(), "dl_model_path: %s", m_cntxt->dlModelPath);
+
+    /* Get input image width information. */
+    get_parameter_or("width", m_cntxt->inputImageWidth, VISION_CNN_DEFAULT_IMAGE_WIDTH);
+
+    /* Get input image height information. */
+    get_parameter_or("height", m_cntxt->inputImageHeight, VISION_CNN_DEFAULT_IMAGE_HEIGHT);
+
+    /* Get input image format information. */
+    status = get_parameter("image_format", tmp);
+
+    if (status == false)
+    {
+        RCLCPP_INFO(get_logger(), "Config parameter 'image_format' not found.");
+        exit(-1);
+    }
+
+    if (tmp == CM_IMG_FORMAT_UYVY)
+    {
+        m_cntxt->inputImageFormat = VX_DF_IMAGE_UYVY;
+    }
+    else if (tmp == CM_IMG_FORMAT_NV12)
+    {
+        m_cntxt->inputImageFormat = VX_DF_IMAGE_NV12;
+    }
+    else
+    {
+        RCLCPP_INFO(get_logger(), "Config parameter 'image_format' not supported.");
+        exit(-1);
+    }
+
+    /* Get enable ldc node flag */
+    get_parameter_or("enable_ldc_node", tmp, 1);
+    m_cntxt->enableLdcNode = (bool)tmp;
+
+    /* Get vizThreshold flag */
+    get_parameter_or("detVizThreshold", thres, 0.5f);
+    m_cntxt->detVizThreshold = (float)thres;
+
+    if (m_cntxt->enableLdcNode == 0 && m_cntxt->inputImageFormat != VX_DF_IMAGE_NV12)
+    {
+        RCLCPP_INFO(get_logger(), "LDC Node can be bypassed only when input is NV12.");
+        exit(-1);
+    }
+
+    /* Get class count information information. */
+    status = get_parameter("num_classes", tmp);
+
+    if (status == false)
+    {
+        RCLCPP_INFO(get_logger(), "Config parameter 'num_classes' not found.");
+        exit(-1);
+    }
+
+    m_cntxt->numClasses = static_cast<int16_t>(tmp);
+
+    /* Get interactive mode flag information. */
+    get_parameter_or("is_interactive", tmp, 0);
+    m_cntxt->is_interactive = static_cast<uint8_t>(tmp);
+
+    /* Get pipeline depth information. */
+    get_parameter_or("pipeline_depth", tmp, 1);
+    m_cntxt->pipelineDepth = static_cast<uint8_t>(tmp);
+
+    /* Get graph export flag information. */
+    get_parameter_or("exportGraph", tmp, 0);
+    m_cntxt->exportGraph = static_cast<uint8_t>(tmp);
+
+    /* Get perf export flag information. */
+    get_parameter_or("exportPerfStats", tmp, 0);
+    m_cntxt->exportPerfStats = (uint8_t)tmp;
+
+    /* Get real-time logging enable information. */
+    get_parameter_or("rtLogEnable", tmp, 0);
+    m_cntxt->rtLogEnable = static_cast<uint8_t>(tmp);
+
+    /* set the ti_logger level */
+    get_parameter_or("log_level", tmp, static_cast<int32_t>(ERROR));
+    logSetLevel(static_cast<LogLevel>(tmp));
+
+    return;
 }
 
 vx_status VisionCnnNode::init()
 {
-   
+    vx_status           vxStatus;
+
+    vxStatus = VX_SUCCESS;
+
+    //tivx_set_debug_zone(VX_ZONE_INFO);
+
+    m_cntxt = new VISION_CNN_Context();
+
+    if (m_cntxt == nullptr)
+    {
+        RCLCPP_ERROR(get_logger(), "new VISION_CNN_Context() failed.");
+        vxStatus = VX_FAILURE;
+    }
+
+    if (vxStatus == (vx_status)VX_SUCCESS)
+    {
+        /* Read the node parameters. */
+        readParams();
+
+        /* Initialize the Application context */
+        vxStatus = VISION_CNN_init(m_cntxt);
+
+        if (vxStatus != (vx_status)VX_SUCCESS)
+        {
+            RCLCPP_ERROR(get_logger(), "VISION_CNN_init() failed.");
+        }
+    }
+
+    if (vxStatus == (vx_status)VX_SUCCESS)
+    {
+        /* Launch processing threads. */
+        VISION_CNN_launchProcThreads(m_cntxt);
+    }
+
+    return vxStatus;
 }
 
 void VisionCnnNode::onShutdown()
 {
-   
+    if (m_cntxt)
+    {
+        VISION_CNN_intSigHandler(m_cntxt);
+    }
 }
