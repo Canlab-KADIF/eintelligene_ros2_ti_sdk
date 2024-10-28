@@ -1,0 +1,1405 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 63ad29c..5f41e23 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -2,6 +2,16 @@ cmake_minimum_required(VERSION 3.5)
+ 
+ project(gscam2)
+ 
++if (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
++  set(BUILD_CORE_NODES OFF)
++elseif (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
++  set(BUILD_CORE_NODES ON CACHE BOOL "Build core nodes")
++else()
++  message(FATAL_ERROR "Unknown processor:" ${CMAKE_SYSTEM_PROCESSOR})
++endif()
++
++if(${BUILD_CORE_NODES})
++
+ # Default to C99
+ if (NOT CMAKE_C_STANDARD)
+   set(CMAKE_C_STANDARD 99)
+@@ -12,20 +22,10 @@ if (NOT CMAKE_CXX_STANDARD)
+   set(CMAKE_CXX_STANDARD 14)
+ endif ()
+ 
+-# Emulate Colcon in CLion
+-if ($ENV{CLION_IDE})
+-  message(STATUS "Running inside CLion")
+-  find_package(fastrtps_cmake_module REQUIRED)
+-  set(FastRTPS_INCLUDE_DIR "/opt/ros/foxy/include")
+-  set(FastRTPS_LIBRARY_RELEASE "/opt/ros/foxy/lib/libfastrtps.so")
+-  set(ros2_shared_DIR "${PROJECT_SOURCE_DIR}/../../../install/ros2_shared/share/ros2_shared/cmake")
+-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DRUN_INSIDE_CLION")
+-endif ()
+-
+ # Gstreamer doesn't provide CMake files
+ find_package(PkgConfig)
+ pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0)
+-pkg_check_modules(GST_APP REQUIRED gstreamer-app-1.0)
++pkg_check_modules(GSTREAMER_APP REQUIRED gstreamer-app-1.0)
+ 
+ find_package(ament_cmake REQUIRED)
+ find_package(camera_calibration_parsers REQUIRED)
+@@ -37,7 +37,10 @@ find_package(rclpy REQUIRED)
+ find_package(ros2_shared REQUIRED)
+ find_package(sensor_msgs REQUIRED)
+ 
+-include_directories(include)
++include_directories(include
++  ${GSTREAMER_INCLUDE_DIRS}
++  ${GSTREAMER_APP_INCLUDE_DIRS}
++)
+ 
+ # Create ament index resource which references the libraries in the binary dir
+ set(node_plugins "")
+@@ -53,7 +56,6 @@ set(GSCAM_NODE_DEPS
+   camera_calibration_parsers
+   camera_info_manager
+   class_loader
+-  GST_APP
+   rclcpp
+   rclcpp_components
+   ros2_shared
+@@ -68,6 +70,10 @@ target_compile_definitions(gscam_node
+ ament_target_dependencies(gscam_node
+   ${GSCAM_NODE_DEPS})
+ 
++target_link_libraries(gscam_node
++  ${GSTREAMER_LIBRARIES}
++  ${GSTREAMER_APP_LIBRARIES})
++
+ rclcpp_components_register_nodes(gscam_node "gscam2::GSCamNode")
+ set(node_plugins "${node_plugins}gscam2::GSCamNode;$<TARGET_FILE:gscam_node>\n")
+ 
+@@ -107,6 +113,10 @@ add_executable(gscam_main
+ ament_target_dependencies(gscam_main
+   ${GSCAM_NODE_DEPS})
+ 
++target_link_libraries(gscam_main
++  ${GSTREAMER_LIBRARIES}
++  ${GSTREAMER_APP_LIBRARIES})
++
+ #=============
+ # Manual composition of camera and subscriber nodes, IPC=true
+ #=============
+@@ -144,7 +154,10 @@ ament_package()
+ # Install
+ #=============
+ 
+-install(DIRECTORY include/${PROJECT_NAME} DESTINATION include)
++install(
++  DIRECTORY include/${PROJECT_NAME}
++  DESTINATION include
++)
+ 
+ install(
+   TARGETS gscam_node
+@@ -167,4 +180,9 @@ install(
+   DESTINATION lib/${PROJECT_NAME}
+ )
+ 
+-install(DIRECTORY cfg launch DESTINATION share/${PROJECT_NAME})
+\ No newline at end of file
++install(
++  DIRECTORY cfg config launch
++  DESTINATION share/${PROJECT_NAME}
++)
++
++endif ()
+\ No newline at end of file
+diff --git a/README_TI.md b/README_TI.md
+new file mode 100644
+index 0000000..2f9451c
+--- /dev/null
++++ b/README_TI.md
+@@ -0,0 +1,136 @@
++GStreamer Camera Node for ROS 2
++===============================
++This GStreamer based camera ROS node is from [https://github.com/clydemcqueen/gscam2](https://github.com/clydemcqueen/gscam2). Following changes are made to customize for the use cases in the Robotics SDK:
++
++* Added GStreamer piplelines that use [the GStreamer plugins optimized for TI Processors](https://github.com/TexasInstruments/edgeai-gst-plugins), and added NV12 encoding mode.
++* Added an example `camara_info.yaml` for Logitech webcam C920 and associated LDC look-up-table file (required to use the LDC hardware accelerator).
++* Added launch files (under 'launch' folder) for Logitech webcam (in MJPG mode and YUYV mode), and OV5640 (in YUYV mode) with GStreamer pipelines using the plugins optimized on TI devices.
++* Dependency: following modules are already built and installed in the the Robotics SDK ROS Docker images.
++    * [edgeai-tiovx-modules](https://github.com/TexasInstruments/edgeai-tiovx-modules)
++    * [edgeai-gst-plugins](https://github.com/TexasInstruments/edgeai-gst-plugins)
++
++```{note}
++The customization are made only for the Robotics SDK. It was not verified that all examples from the original GIT repository still work with these changes.
++```
++
++## Usage: USB Camera
++
++### Running gscam2 on the target
++1. Camera Calibration and Rectification Map Generation: See corresponding parts of [mono_capture/README.md](../../../ros2/drivers/mono_capture/README.md).
++
++
++2. Build the ROS node:
++    ```sh
++    cd $ROS_WS
++    colcon build --base-paths /opt/robotics_sdk/ros2 --executor sequential
++    source install/setup.bash
++    ```
++
++3. Launch the "gscam2" ROS node:
++Before launching the "gscam2", please make sure to update `device` in the launch file to point to correct camera device (`/dev/videoX` or `/dev/video-usb-camX`).
++    For capturing in MJPG (motion JPEG) mode,
++    ```sh
++    ros2 launch gscam2 v4l_mjpg_launch.py
++    ```
++    For capturing in YUYV mode,
++    ```sh
++    ros2 launch gscam2 v4l_yuv_launch.py
++    ros2 launch gscam2 v4l_ov5640_launch.py # for OV5640 CSI camera
++    ```
++
++```{note}
++The measured framerate for the output topic can be less than the framerate set in the launch file, depending on the light condition of the scenes. This is a normal behavior inherited from `v4l2src` and the default ISP settings of the USB webcam.
++```
++
++### Visualization on remote Ubuntu PC
++By default, the output topic `raw_image` is published in NV12 color format to make more efficient when the node is integrated with the vision vision CNN processing chain (including `ti_vision_cnn` ROS node) on the target. We provide a launch file for visualization on the remote Ubuntu (included in `ti_viz_nodes` ROS package).
++
++In the PC ROS2 Docker container,
++```sh
++ros2 launch ti_viz_nodes gscam_nv12_launch.py
++```
++
++## Usage: IMX219 Camera
++
++```{only} tag_j7x
++Please follow [the hardware setup section of Edge AI documentation](https://software-dl.ti.com/jacinto7/esd/processor-sdk-linux-edgeai/TDA4VM/latest/exports/edgeai_docs/devices/TDA4VM/linux/getting_started.html#rpiv2-imx219-raw-sensor).
++```
++```{only} tag_am62a
++Please follow [the hardware setup section of Edge AI documentation](https://software-dl.ti.com/jacinto7/esd/processor-sdk-linux-edgeai/AM62AX/latest/exports/edgeai_docs/devices/AM62AX/linux/getting_started.html#rpiv2-imx219-raw-sensor).
++```
++
++You can check the camera ID and subdev ID for the IMX219 CSI camera attached to the hardware setup by running `/opt/edgeai-gst-apps/scripts/setup_cameras.sh` on the target host Linux. Accordingly please update the launch files below, or it's also possible to pass as launch arguments.
++
++### Running gscam2 on the target
++To publish the captured images from the IMX219 camera,
++```sh
++ros2 launch gscam2 v4l_imx219_launch.py cam_id:=X subdev_id:=Y
++```
++
++```{note}
++The GStreamer pipeline in `v4l_imx219_launch.py` includes the ISP plugin (tiovxisp) followed by the image scaler plugin (tiovxmultiscaler) to resize the images to the output resolution. The output images are published in NV12 format.
++```
++
++### Visualization on remote PC
++
++For visualization, run the following in the PC Docker container,
++```sh
++ros2 launch ti_viz_nodes gscam_nv12_launch.py width:=1280 height:=720
++```
++
++## Usage: IMX390 Camera
++
++```{only} tag_j7x
++Please follow [the hardware setup section of Edge AI documentation](https://software-dl.ti.com/jacinto7/esd/processor-sdk-linux-edgeai/TDA4VM/latest/exports/edgeai_docs/devices/TDA4VM/linux/getting_started.html#imx390-raw-sensor).
++```
++```{only} tag_am62a
++Please follow [the hardware setup section of Edge AI documentation](https://software-dl.ti.com/jacinto7/esd/processor-sdk-linux-edgeai/AM62AX/latest/exports/edgeai_docs/devices/AM62AX/linux/getting_started.html#imx390-raw-sensor).
++```
++
++### Running gscam for raw image capture
++
++You can check the camera ID and subdev ID for the IMX390 camera attached to the hardware setup by running `/opt/edgeai-gst-apps/scripts/setup_cameras.sh` on the target host Linux. Accordingly please update the launch files below, or it's also possible to pass as launch arguments.
++
++To publish raw images in the native resolution (1936 x 1100),
++```sh
++ros2 launch gscam v4l_imx390_raw_launch.py cam_id:=X subdev_id:=Y
++```
++
++### Running gscam with rectification and resizing
++
++We also provide a launch file that includes rectification and resizing in the GStreamer pipeline.
++
++````{note}
++`v4l_imx390_launch.py` has `tiovxldc` in the GStreamer pipeline and
++`tiovxldc` requires a LUT file (specified with `lut-file`). The LUT file is specific to the camera being used.
++As an example, we provide camera calibration data for a fisheye IMX390 camera
++in the form of a camera_info YAML file. To generate the LUT files,
++please run the following in the Robotics SDK Docker container on the target:
++```sh
++bash /opt/robotics_sdk/tools/mono_camera/imx390_ldc.sh
++```
++````
++
++```sh
++# 1080p
++ros2 launch gscam v4l_imx390_launch.py width:=1920 height:=1080 cam_id:=X subdev_id:=Y
++# 720p
++ros2 launch gscam v4l_imx390_launch.py width:=1280 height:=720 cam_id:=X subdev_id:=Y
++```
++
++```{note}
++The GStreamer pipeline in `v4l_imx390_launch.py` also includes the LDC plugin (tiovxldc). Raw resolution is 1936 x 1100. The LDC plugin performs rectification and then cropping to produce 1920 x 1080 images in NV12 format, followed by MSC plugin (tiovxmultiscaler) to resize the images to the output resolution.
++```
++
++### Visualization on remote PC
++
++For visualization, run the following in the PC Docker container,
++
++```sh
++# native resolution (1936 x 1100)
++ros2 launch ti_viz_nodes gscam_nv12_launch.py width:=1936 height:=1100
++# 1080p
++ros2 launch ti_viz_nodes gscam_nv12_launch.py width:=1920 height:=1080
++# 720p
++ros2 launch ti_viz_nodes gscam_nv12_launch.py width:=1280 height:=720
++```
+diff --git a/config/C920_6D_Pose_HD_camera_info.yaml b/config/C920_6D_Pose_HD_camera_info.yaml
+new file mode 100644
+index 0000000..a4c77aa
+--- /dev/null
++++ b/config/C920_6D_Pose_HD_camera_info.yaml
+@@ -0,0 +1,31 @@
++%YAML:1.0
++---
++image_width: 1280
++image_height: 960
++camera_name: camera
++camera_matrix: !!opencv-matrix
++   rows: 3
++   cols: 3
++   dt: d
++   data: [ 9.3797299601201667e+02, 0., 6.4110167315102080e+02, 0.,
++       9.3981016471195335e+02, 3.8512990806142415e+02, 0., 0., 1. ]
++distortion_model: plumb_bob
++distortion_coefficients: !!opencv-matrix
++   rows: 1
++   cols: 5
++   dt: d
++   data: [ 7.3934261699576093e-02, -4.1542678753901879e-01,
++       1.4128959036683215e-03, 9.4384360282255390e-04,
++       5.9913436641201279e-01 ]
++rectification_matrix: !!opencv-matrix
++   rows: 3
++   cols: 3
++   dt: d
++   data: [ 1., 0., 0., 0., 1., 0., 0., 0., 1. ]
++projection_matrix: !!opencv-matrix
++   rows: 3
++   cols: 4
++   dt: d
++   data: [ 9.3797299601201667e+02, 0., 6.4110167315102080e+02, 0., 0.,
++       9.3981016471195335e+02, 3.8512990806142415e+02, 0., 0., 0., 1.,
++       0. ]
+diff --git a/config/C920_HD_camera_info.yaml b/config/C920_HD_camera_info.yaml
+new file mode 100644
+index 0000000..3ce26c2
+--- /dev/null
++++ b/config/C920_HD_camera_info.yaml
+@@ -0,0 +1,31 @@
++%YAML:1.0
++---
++image_width: 1280
++image_height: 720
++camera_name: camera
++camera_matrix: !!opencv-matrix
++   rows: 3
++   cols: 3
++   dt: d
++   data: [ 9.3797299601201667e+02, 0., 6.4110167315102080e+02, 0.,
++       9.3981016471195335e+02, 3.8512990806142415e+02, 0., 0., 1. ]
++distortion_model: plumb_bob
++distortion_coefficients: !!opencv-matrix
++   rows: 1
++   cols: 5
++   dt: d
++   data: [ 7.3934261699576093e-02, -4.1542678753901879e-01,
++       1.4128959036683215e-03, 9.4384360282255390e-04,
++       5.9913436641201279e-01 ]
++rectification_matrix: !!opencv-matrix
++   rows: 3
++   cols: 3
++   dt: d
++   data: [ 1., 0., 0., 0., 1., 0., 0., 0., 1. ]
++projection_matrix: !!opencv-matrix
++   rows: 3
++   cols: 4
++   dt: d
++   data: [ 9.3797299601201667e+02, 0., 6.4110167315102080e+02, 0., 0.,
++       9.3981016471195335e+02, 3.8512990806142415e+02, 0., 0., 0., 1.,
++       0. ]
+diff --git a/config/IMX219_HD_camera_info.yaml b/config/IMX219_HD_camera_info.yaml
+new file mode 100644
+index 0000000..8610603
+--- /dev/null
++++ b/config/IMX219_HD_camera_info.yaml
+@@ -0,0 +1,31 @@
++%YAML:1.0
++---
++image_width: 1280
++image_height: 720
++camera_name: camera
++camera_matrix: !!opencv-matrix
++   rows: 3
++   cols: 3
++   dt: d
++   data: [ 1.0202477539224885e+03, 0., 6.5408568058599019e+02, 0.,
++       1.0227768039269025e+03, 3.3505135921974897e+02, 0., 0., 1. ]
++distortion_model: plumb_bob
++distortion_coefficients: !!opencv-matrix
++   rows: 1
++   cols: 5
++   dt: d
++   data: [ 1.9778509583126228e-01, -3.7778169196911265e-01,
++       -3.0851736169866797e-03, 1.0126562004595756e-03,
++       7.2843066712127577e-02 ]
++rectification_matrix: !!opencv-matrix
++   rows: 3
++   cols: 3
++   dt: d
++   data: [ 1., 0., 0., 0., 1., 0., 0., 0., 1. ]
++projection_matrix: !!opencv-matrix
++   rows: 3
++   cols: 4
++   dt: d
++   data: [ 1.0202477539224885e+03, 0., 6.5408568058599019e+02, 0., 0.,
++       1.0227768039269025e+03, 3.3505135921974897e+02, 0., 0., 0., 1.,
++       0. ]
+diff --git a/launch/v4l_imx219_launch.py b/launch/v4l_imx219_launch.py
+new file mode 100644
+index 0000000..6c2aa56
+--- /dev/null
++++ b/launch/v4l_imx219_launch.py
+@@ -0,0 +1,178 @@
++"""
++Launch gscam2 node with parameters and remappings.
++"""
++import os
++import subprocess
++from ament_index_python.packages import get_package_share_directory
++from launch import LaunchDescription
++from launch.actions import DeclareLaunchArgument
++from launch.substitutions import LaunchConfiguration
++from launch.actions import OpaqueFunction
++from launch_ros.actions import Node
++
++# run setup_cameras.sh to configure IMX219 camera with 10-bit 1640x1232
++# Alternatively, the following can be run in the command line (preferably on the host Linux):
++# IMX219_CAM_FMT="[fmt:SRGGB10_1X10/1640x1232]" /opt/edgeai-gst-apps/scripts/setup_cameras.sh
++command = "/opt/edgeai-gst-apps/scripts/setup_cameras.sh"
++env = {"IMX219_CAM_FMT": "[fmt:SRGGB10_1X10/1640x1232]"}
++subprocess.run(command, env={**os.environ, **env}, shell=True)
++
++def finalize_node(context, *args, **kwargs):
++
++    """
++    Following setup for IMX219 camera is included in entrypoint.sh:
++    IMX219_CAM_FMT="[fmt:SRGGB10_1X10/1640x1232]" /opt/edgeai-gst-apps/scripts/setup_cameras.sh
++
++    You can check the cam_id and subdev_id for the IMX219 camera (RPi v2)
++    attached by running /opt/edgeai-gst-apps/scripts/setup_cameras.sh on the target
++    host Linux. Accordingly please update the parameters or pass as launch arguments.
++    """
++
++    # Video device
++    device = "/dev/video-imx219-cam" + LaunchConfiguration('cam_id').perform(context)
++
++    # Subdev
++    subdev = "/dev/v4l-imx219-subdev" + LaunchConfiguration('subdev_id').perform(context)
++
++    # Width and height of the image
++    width = int(LaunchConfiguration('width').perform(context))
++    height = int(LaunchConfiguration('height').perform(context))
++
++    # Framerate
++    framerate = LaunchConfiguration('framerate')
++
++    # Image encoding: "yuv420" - publishes in "NV12" (default), "rgb8"
++    image_encoding = LaunchConfiguration('image_encoding')
++
++    # Name of the gscam2 node
++    node_name = LaunchConfiguration('node_name')
++
++    # sensor_name
++    sensor_name = 'SENSOR_SONY_IMX219_RPI'
++
++    # DCC VISS binary file
++    dcc_isp_file = '/opt/imaging/imx219/linear/dcc_viss_10b_1640x1232.bin'
++
++    # DCC 2A binary file
++    dcc_2a_file = '/opt/imaging/imx219/linear/dcc_2a_10b_1640x1232.bin'
++
++    # GStreamer pipeline specified in gscam_config was tested with IMX219 camera.
++    # Assumes 'edgeai-tiovx-modules' and 'edgeai-gst-plugins' are already installed in target ROS container.
++    # Following pipleline center-crops 1640 x 1232 to 1632 x 918, then resizes to 1280 x 720.
++    gscam_config = 'v4l2src device={} io-mode=5 do-timestamp=true ! '.format(device) \
++        + 'video/x-bayer, width=1640, height=1232, format=rggb10 ! ' \
++        + 'tiovxisp sink_0::device={} dcc-isp-file={} '.format(subdev, dcc_isp_file) \
++        + 'sink_0::dcc-2a-file={} format-msb=9 sensor-name={} ! '.format(dcc_2a_file, sensor_name) \
++        + 'video/x-raw, format=NV12, width=1640, height=1232 ! ' \
++        + 'tiovxmultiscaler src_0::roi-startx=4 src_0::roi-starty=157 src_0::roi-width=1632 src_0::roi-height=918 ! ' \
++        + 'video/x-raw, format=NV12, width={}, height={} ! '.format(width, height) \
++        + 'tiovxdlcolorconvert target=1 out-pool-size=4'
++    print(gscam_config)
++
++    # Camera namespace
++    camera_name = LaunchConfiguration('camera_name').perform(context)
++    image_topic_name = LaunchConfiguration('image_topic_name').perform(context)
++
++    # Camera calibration file
++    # config_dir = os.path.join(get_package_share_directory('gscam2'), 'config')
++    # camera_config = 'file://' + os.path.join(config_dir, 'IMX219_HD_camera_info.yaml')
++    camera_config = 'file:///opt/robotics_sdk/tools/camera_info/IMX219_HD_camera_info.yaml'
++    print(camera_config)
++
++    node = Node(
++        package    = 'gscam2',
++        executable = 'gscam_main',
++        output     = 'screen',
++        name       = node_name,
++        namespace  = camera_name,
++        parameters = [
++            {
++                'gscam_config':       gscam_config,
++                'camera_name':        camera_name,
++                'image_topic_name':   image_topic_name,
++                'camera_info_url':    camera_config,
++                'image_encoding':     image_encoding,
++                'appsink_width':      width,
++                'appsink_height':     height,
++                'appsink_framerate':  framerate,
++                'sync_sink':          False,
++                'preroll':            False,
++                'use_gst_timestamps': False,
++                'frame_id':           camera_name,
++            },
++        ],
++    )
++
++    return [node]
++
++
++def generate_launch_description():
++
++    cam_id_arg = DeclareLaunchArgument(
++        'cam_id',
++        default_value='0',
++        description='ID of the video device to use.'
++    )
++
++    subdev_id_arg = DeclareLaunchArgument(
++        'subdev_id',
++        default_value='0',
++        description='ID of subdev to use.'
++    )
++
++    width_arg = DeclareLaunchArgument(
++        'width',
++        default_value='1280',
++        description='width of the image, not larger than 1632'
++    )
++
++    height_arg = DeclareLaunchArgument(
++        'height',
++        default_value='720',
++        description='height of the image, not larger than 918'
++    )
++
++    framerate_arg = DeclareLaunchArgument(
++        'framerate',
++        default_value='30',
++        description='Frame rate of the camera'
++    )
++
++    image_encoding_arg = DeclareLaunchArgument(
++        'image_encoding',
++        default_value='yuv420',
++        description='Encoding of the camera image'
++    )
++
++    node_name_arg = DeclareLaunchArgument(
++        'node_name',
++        default_value='gscam_publisher',
++        description='Name of the gscam2 node'
++    )
++
++    camera_name_arg = DeclareLaunchArgument(
++        'camera_name',
++        default_value='camera',
++        description='Name of the camera namespace'
++    )
++
++    image_topic_name_arg = DeclareLaunchArgument(
++        'image_topic_name',
++        default_value='image_raw',
++        description='Name of the image topic'
++    )
++
++    # Create the launch description and add the arguments
++    ld = LaunchDescription()
++    ld.add_action(cam_id_arg)
++    ld.add_action(subdev_id_arg)
++    ld.add_action(width_arg)
++    ld.add_action(height_arg)
++    ld.add_action(framerate_arg)
++    ld.add_action(image_encoding_arg)
++    ld.add_action(node_name_arg)
++    ld.add_action(camera_name_arg)
++    ld.add_action(image_topic_name_arg)
++    ld.add_action(OpaqueFunction(function=finalize_node))
++
++    return ld
+\ No newline at end of file
+diff --git a/launch/v4l_imx390_launch.py b/launch/v4l_imx390_launch.py
+new file mode 100644
+index 0000000..4db3d9b
+--- /dev/null
++++ b/launch/v4l_imx390_launch.py
+@@ -0,0 +1,175 @@
++"""
++Launch gscam2 node with parameters and remappings.
++"""
++import os
++from ament_index_python.packages import get_package_share_directory
++from launch import LaunchDescription
++from launch.actions import DeclareLaunchArgument
++from launch.substitutions import LaunchConfiguration
++from launch.actions import OpaqueFunction
++from launch_ros.actions import Node
++
++def finalize_node(context, *args, **kwargs):
++
++    """
++    NOTE: v4l_imx390.launch has tiovxldc in the GStreamer pipeline and
++    tiovxldc requires lut-file. The LUT file is specific to the camera.
++    As an example, we provide camera calibration data for a fisheye IMX390 camera
++    is provided in the form of camera_info YAML file. To generate the LUT files,
++    please run the following in the Robotics SDK Docker container on the target target:
++    $ bash /opt/robotics_sdk/tools/mono_camera/imx390_ldc.sh
++    """
++
++    """
++    You can check the cam_id and subdev_id for the IMX390 camera
++    attached by running /opt/edgeai-gst-apps/scripts/setup_cameras.sh on the target
++    host Linux. Accordingly please update the parameters or pass as launch arguments.
++    """
++    # Video device
++    device = "/dev/video-imx390-cam" + LaunchConfiguration('cam_id').perform(context)
++
++    # Subdev
++    subdev = "/dev/v4l-imx390-subdev" + LaunchConfiguration('subdev_id').perform(context)
++
++    # Width and height of the image
++    width = int(LaunchConfiguration('width').perform(context))
++    height = int(LaunchConfiguration('height').perform(context))
++
++    # Framerate
++    framerate = LaunchConfiguration('framerate')
++
++    # Image encoding: "yuv420" - publishes in "NV12" (default), "rgb8"
++    image_encoding = LaunchConfiguration('image_encoding')
++
++    # Name of the gscam2 node
++    node_name = LaunchConfiguration('node_name')
++
++    # sensor_name
++    sensor_name = 'SENSOR_SONY_IMX390_UB953_D3'
++
++    # DCC VISS binary file
++    dcc_isp_file = '/opt/imaging/imx390/linear/dcc_viss.bin'
++
++    # DCC 2A binary file
++    dcc_2a_file = '/opt/imaging/imx390/linear/dcc_2a.bin'
++
++    # LDC LUT file
++    lut_file = '/opt/imaging/imx390/imx390_35244_equidistant_{}x{}_LUT.bin'.format(width, height)
++
++    # GStreamer pipeline specified in gscam_config was tested with IMX390.
++    # Assumes 'edgeai-tiovx-modules' and 'edgeai-gst-plugins' are already installed in target ROS container.
++    gscam_config = 'v4l2src device={} do-timestamp=true ! '.format(device) \
++        + 'video/x-bayer, width=1936, height=1100, format=rggb12 ! '.format(width, height) \
++        + 'tiovxisp sink_0::device={} dcc-isp-file={} '.format(subdev, dcc_isp_file) \
++        + 'sink_0::dcc-2a-file={} format-msb=11 sensor-name={} ! '.format(dcc_2a_file, sensor_name) \
++        + 'video/x-raw, format=NV12 ! ' \
++        + 'tiovxldc sensor-name={} lut-file={} ldc-ds-factor=2 ldc-table-width={} ldc-table-height={} out-block-height=32 out-block-width=32 !'.format(sensor_name, lut_file, width, height) \
++        + 'video/x-raw, format=NV12, width={}, height={} !'.format(width, height) \
++        + 'tiovxdlcolorconvert target=1 out-pool-size=4'
++    print(gscam_config)
++
++    # Camera namespace
++    camera_name = LaunchConfiguration('camera_name').perform(context)
++    image_topic_name = LaunchConfiguration('image_topic_name').perform(context)
++
++    # camera_info URL: replace with camera_info from camera calibration
++    camera_info_url = 'file:///opt/imaging/imx390/imx390_35244_equidistant_{}x{}_rect.yaml'.format(width, height)
++    print(camera_info_url)
++
++    node = Node(
++        package    = 'gscam2',
++        executable = 'gscam_main',
++        output     = 'screen',
++        name       = node_name,
++        namespace  = camera_name,
++        parameters = [
++            {
++                'gscam_config':       gscam_config,
++                'camera_name':        camera_name,
++                'image_topic_name':   image_topic_name,
++                'camera_info_url':    camera_info_url,
++                'image_encoding':     image_encoding,
++                'appsink_width':      width,
++                'appsink_height':     height,
++                'appsink_framerate':  framerate,
++                'sync_sink':          False,
++                'preroll':            False,
++                'use_gst_timestamps': False,
++                'frame_id':           camera_name,
++            },
++        ],
++    )
++
++    return [node]
++
++
++def generate_launch_description():
++
++    cam_id_arg = DeclareLaunchArgument(
++        'cam_id',
++        default_value='0',
++        description='ID of the video device to use.'
++    )
++
++    subdev_id_arg = DeclareLaunchArgument(
++        'subdev_id',
++        default_value='0',
++        description='ID of subdev to use.'
++    )
++
++    width_arg = DeclareLaunchArgument(
++        'width',
++        default_value='1280',
++        description='width of the image'
++    )
++
++    height_arg = DeclareLaunchArgument(
++        'height',
++        default_value='720',
++        description='height of the image'
++    )
++
++    framerate_arg = DeclareLaunchArgument(
++        'framerate',
++        default_value='30',
++        description='Frame rate of the camera'
++    )
++
++    image_encoding_arg = DeclareLaunchArgument(
++        'image_encoding',
++        default_value='yuv420',
++        description='Encoding of the camera image'
++    )
++
++    node_name_arg = DeclareLaunchArgument(
++        'node_name',
++        default_value='gscam_publisher',
++        description='Name of the gscam2 node'
++    )
++
++    camera_name_arg = DeclareLaunchArgument(
++        'camera_name',
++        default_value='camera',
++        description='Name of the camera namespace'
++    )
++
++    image_topic_name_arg = DeclareLaunchArgument(
++        'image_topic_name',
++        default_value='image_raw',
++        description='Name of the image topic'
++    )
++
++    # Create the launch description and add the arguments
++    ld = LaunchDescription()
++    ld.add_action(cam_id_arg)
++    ld.add_action(subdev_id_arg)
++    ld.add_action(width_arg)
++    ld.add_action(height_arg)
++    ld.add_action(framerate_arg)
++    ld.add_action(image_encoding_arg)
++    ld.add_action(node_name_arg)
++    ld.add_action(camera_name_arg)
++    ld.add_action(image_topic_name_arg)
++    ld.add_action(OpaqueFunction(function=finalize_node))
++
++    return ld
+\ No newline at end of file
+diff --git a/launch/v4l_imx390_raw_launch.py b/launch/v4l_imx390_raw_launch.py
+new file mode 100644
+index 0000000..7bcee03
+--- /dev/null
++++ b/launch/v4l_imx390_raw_launch.py
+@@ -0,0 +1,147 @@
++"""
++Launch gscam2 node with parameters and remappings.
++"""
++import os
++from ament_index_python.packages import get_package_share_directory
++from launch import LaunchDescription
++from launch.actions import DeclareLaunchArgument
++from launch.substitutions import LaunchConfiguration
++from launch.actions import OpaqueFunction
++from launch_ros.actions import Node
++
++def finalize_node(context, *args, **kwargs):
++
++    """
++    You can check the cam_id and subdev_id for the IMX390 camera
++    attached by running /opt/edgeai-gst-apps/scripts/setup_cameras.sh on the target
++    host Linux. Accordingly please update the parameters or pass as launch arguments.
++    """
++    # Video device
++    device = "/dev/video-imx390-cam" + LaunchConfiguration('cam_id').perform(context)
++
++    # Subdev
++    subdev = "/dev/v4l-imx390-subdev" + LaunchConfiguration('subdev_id').perform(context)
++
++    # Width and height of the image
++    width  = 1936
++    height = 1100
++
++    # Framerate
++    framerate = LaunchConfiguration('framerate')
++
++    # Image encoding: "yuv420" - publishes in "NV12" (default), "rgb8"
++    image_encoding = LaunchConfiguration('image_encoding')
++
++    # Name of the gscam2 node
++    node_name = LaunchConfiguration('node_name')
++
++    # sensor_name
++    sensor_name = 'SENSOR_SONY_IMX390_UB953_D3'
++
++    # DCC VISS binary file
++    dcc_isp_file = '/opt/imaging/imx390/linear/dcc_viss.bin'
++
++    # DCC 2A binary file
++    dcc_2a_file = '/opt/imaging/imx390/linear/dcc_2a.bin'
++
++    # GStreamer pipeline specified in gscam_config was tested with IMX390,
++    # 'edgeai-tiovx-modules' and 'edgeai-gst-plugins' are already installed in the ROS container
++    gscam_config = 'v4l2src device={} do-timestamp=true ! '.format(device) \
++        + 'video/x-bayer, width={}, height={}, format=rggb12 ! '.format(width, height) \
++        + 'tiovxisp sink_0::device={} dcc-isp-file={} '.format(subdev, dcc_isp_file) \
++        + 'sink_0::dcc-2a-file={} format-msb=11 sensor-name={} ! '.format(dcc_2a_file, sensor_name) \
++        + 'video/x-raw, format=NV12 ! ' \
++        + 'tiovxdlcolorconvert target=1 out-pool-size=4'
++    print(gscam_config)
++
++    # Camera namespace
++    camera_name = LaunchConfiguration('camera_name').perform(context)
++    image_topic_name = LaunchConfiguration('image_topic_name').perform(context)
++
++    # camera_info URL: replace with camera_info from camera calibration
++    camera_info_url = 'file:///opt/robotics_sdk/tools/mono_camera/imx390_35244_equidistant_camera_info.yaml'
++    print(camera_info_url)
++
++    node = Node(
++        package    = 'gscam2',
++        executable = 'gscam_main',
++        output     = 'screen',
++        name       = node_name,
++        namespace  = camera_name,
++        parameters = [
++            {
++                'gscam_config':       gscam_config,
++                'camera_name':        camera_name,
++                'image_topic_name':   image_topic_name,
++                'camera_info_url':    camera_info_url,
++                'image_encoding':     image_encoding,
++                'appsink_width':      width,
++                'appsink_height':     height,
++                'appsink_framerate':  framerate,
++                'sync_sink':          False,
++                'preroll':            False,
++                'use_gst_timestamps': False,
++                'frame_id':           camera_name,
++            },
++        ],
++    )
++
++    return [node]
++
++
++def generate_launch_description():
++
++    cam_id_arg = DeclareLaunchArgument(
++        'cam_id',
++        default_value='0',
++        description='ID of the video device to use.'
++    )
++
++    subdev_id_arg = DeclareLaunchArgument(
++        'subdev_id',
++        default_value='0',
++        description='ID of subdev to use.'
++    )
++
++    framerate_arg = DeclareLaunchArgument(
++        'framerate',
++        default_value='30',
++        description='Frame rate of the camera'
++    )
++
++    image_encoding_arg = DeclareLaunchArgument(
++        'image_encoding',
++        default_value='yuv420',
++        description='Encoding of the camera image'
++    )
++
++    node_name_arg = DeclareLaunchArgument(
++        'node_name',
++        default_value='gscam_publisher',
++        description='Name of the gscam2 node'
++    )
++
++    camera_name_arg = DeclareLaunchArgument(
++        'camera_name',
++        default_value='camera',
++        description='Name of the camera namespace'
++    )
++
++    image_topic_name_arg = DeclareLaunchArgument(
++        'image_topic_name',
++        default_value='image_raw',
++        description='Name of the image topic'
++    )
++
++    # Create the launch description and add the arguments
++    ld = LaunchDescription()
++    ld.add_action(cam_id_arg)
++    ld.add_action(subdev_id_arg)
++    ld.add_action(framerate_arg)
++    ld.add_action(image_encoding_arg)
++    ld.add_action(node_name_arg)
++    ld.add_action(camera_name_arg)
++    ld.add_action(image_topic_name_arg)
++    ld.add_action(OpaqueFunction(function=finalize_node))
++
++    return ld
+\ No newline at end of file
+diff --git a/launch/v4l_mjpg_launch.py b/launch/v4l_mjpg_launch.py
+new file mode 100644
+index 0000000..ad047b9
+--- /dev/null
++++ b/launch/v4l_mjpg_launch.py
+@@ -0,0 +1,138 @@
++"""
++Launch gscam2 node with parameters and remappings.
++"""
++import os
++from ament_index_python.packages import get_package_share_directory
++from launch import LaunchDescription
++from launch.actions import DeclareLaunchArgument
++from launch.substitutions import LaunchConfiguration,TextSubstitution
++from launch.actions import OpaqueFunction
++from launch_ros.actions import Node
++
++def finalize_node(context, *args, **kwargs):
++
++    # Device
++    device = "/dev/video-usb-cam" + LaunchConfiguration('cam_id').perform(context)
++
++    width  = int(LaunchConfiguration('width').perform(context))
++    height = int(LaunchConfiguration('height').perform(context))
++    cam_calib_file = LaunchConfiguration('cam_calib').perform(context)
++    # Framerate
++    framerate = LaunchConfiguration('framerate')
++
++    # Image encoding: "yuv420" - publishes in "NV12" (default), "rgb8"
++    image_encoding = LaunchConfiguration('image_encoding')
++
++    # Name of the gscam2 node
++    node_name = LaunchConfiguration('node_name')
++
++    # GStreamer pipeline specified in gscam_config was tested with Logitech C920 webcam in MJPG mode,
++    # Assumes 'edgeai-tiovx-modules' and 'edgeai-gst-plugins' are already installed in target ROS container
++    gscam_config = 'v4l2src device=' + device + ' io-mode=2 do-timestamp=true ! image/jpeg ! jpegdec ! tiovxdlcolorconvert'
++
++    # Camera namespace
++    camera_name = LaunchConfiguration('camera_name').perform(context)
++    image_topic_name = LaunchConfiguration('image_topic_name').perform(context)
++
++    # Camera calibration file
++    config_dir = os.path.join(get_package_share_directory('gscam2'), 'config')
++    camera_config = 'file://' + os.path.join(config_dir, cam_calib_file)
++    print(camera_config)
++
++    node = Node(
++        package    = 'gscam2',
++        executable = 'gscam_main',
++        output     = 'screen',
++        name       = node_name,
++        namespace  = camera_name,
++        parameters = [
++            {
++                'gscam_config':       gscam_config,
++                'camera_name':        camera_name,
++                'image_topic_name':   image_topic_name,
++                'camera_info_url':    camera_config,
++                'image_encoding':     image_encoding,
++                'appsink_width':      width,
++                'appsink_height':     height,
++                'appsink_framerate':  framerate,
++                'sync_sink':          False,
++                'preroll':            False,
++                'use_gst_timestamps': False,
++                'frame_id':           camera_name,
++            },
++        ],
++    )
++
++    return [node]
++
++
++def generate_launch_description():
++
++    cam_id_arg = DeclareLaunchArgument(
++        'cam_id',
++        default_value='0',
++        description='ID of the video device to use.'
++    )
++
++    framerate_arg = DeclareLaunchArgument(
++        'framerate',
++        default_value='30',
++        description='Frame rate of the camera'
++    )
++
++    width_arg = DeclareLaunchArgument(
++        'width',
++        default_value=TextSubstitution(text='1280'),
++        description='Width of the Frame'
++    )
++
++    height_arg = DeclareLaunchArgument(
++        'height',
++        default_value=TextSubstitution(text='720'),
++        description='Height of the Frame'
++    )
++
++    cam_calib_arg = DeclareLaunchArgument(
++        'cam_calib',
++        default_value=TextSubstitution(text='C920_HD_camera_info.yaml'),
++        description='Camera Calibration File'
++    )
++
++    image_encoding_arg = DeclareLaunchArgument(
++        'image_encoding',
++        default_value='yuv420',
++        description='Encoding of the camera image'
++    )
++
++    node_name_arg = DeclareLaunchArgument(
++        'node_name',
++        default_value='gscam_publisher',
++        description='Name of the gscam2 node'
++    )
++
++    camera_name_arg = DeclareLaunchArgument(
++        'camera_name',
++        default_value='camera',
++        description='Name of the camera namespace'
++    )
++
++    image_topic_name_arg = DeclareLaunchArgument(
++        'image_topic_name',
++        default_value='image_raw',
++        description='Name of the image topic'
++    )
++
++    # Create the launch description and add the arguments
++    ld  = LaunchDescription()
++    ld.add_action(cam_id_arg)
++    ld.add_action(width_arg)
++    ld.add_action(height_arg)
++    ld.add_action(cam_calib_arg)
++    ld.add_action(framerate_arg)
++    ld.add_action(image_encoding_arg)
++    ld.add_action(node_name_arg)
++    ld.add_action(camera_name_arg)
++    ld.add_action(image_topic_name_arg)
++    ld.add_action(OpaqueFunction(function=finalize_node))
++
++    return ld
+\ No newline at end of file
+diff --git a/launch/v4l_ov5640_launch.py b/launch/v4l_ov5640_launch.py
+new file mode 100644
+index 0000000..7b40876
+--- /dev/null
++++ b/launch/v4l_ov5640_launch.py
+@@ -0,0 +1,114 @@
++"""
++Launch gscam2 node with parameters and remappings.
++"""
++import os
++from ament_index_python.packages import get_package_share_directory
++from launch import LaunchDescription
++from launch.actions import DeclareLaunchArgument
++from launch.substitutions import LaunchConfiguration
++from launch.actions import OpaqueFunction
++from launch_ros.actions import Node
++
++def finalize_node(context, *args, **kwargs):
++
++    # Device
++    device = "/dev/video" + LaunchConfiguration('video_id').perform(context)
++
++    # Framerate
++    framerate = LaunchConfiguration('framerate')
++
++    # Image encoding: "yuv420" - publishes in "NV12" (default), "rgb8"
++    image_encoding = LaunchConfiguration('image_encoding')
++
++    # Name of the gscam2 node
++    node_name = LaunchConfiguration('node_name')
++
++    # GStreamer pipeline specified in gscam_config was tested with OV5640 CSI camera in YUYV mode.
++    # Assumes 'edgeai-tiovx-modules' and 'edgeai-gst-plugins' are already installed in the ROS container
++    gscam_config = 'v4l2src device=' + device + ' io-mode=0 do-timestamp=true ! tiovxdlcolorconvert'
++
++    # Camera namespace
++    camera_name = LaunchConfiguration('camera_name').perform(context)
++    image_topic_name = LaunchConfiguration('image_topic_name').perform(context)
++
++    # Camera calibration file
++    config_dir = os.path.join(get_package_share_directory('gscam2'), 'config')
++    camera_config = 'file://' + os.path.join(config_dir, 'C920_HD_camera_info.yaml')
++    print(camera_config)
++
++    node = Node(
++        package    = 'gscam2',
++        executable = 'gscam_main',
++        output     = 'screen',
++        name       = node_name,
++        namespace  = camera_name,
++        parameters = [
++            {
++                'gscam_config':       gscam_config,
++                'camera_name':        camera_name,
++                'image_topic_name':   image_topic_name,
++                'camera_info_url':    camera_config,
++                'image_encoding':     image_encoding,
++                'appsink_width':      1280,
++                'appsink_height':     720,
++                'appsink_framerate':  framerate,
++                'sync_sink':          False,
++                'preroll':            False,
++                'use_gst_timestamps': False,
++                'frame_id':           camera_name,
++            },
++        ],
++    )
++
++    return [node]
++
++
++def generate_launch_description():
++
++    video_id_arg = DeclareLaunchArgument(
++        'video_id',
++        default_value='2',
++        description='ID of the video device to use.'
++    )
++
++    framerate_arg = DeclareLaunchArgument(
++        'framerate',
++        default_value='30',
++        description='Frame rate of the camera'
++    )
++
++    image_encoding_arg = DeclareLaunchArgument(
++        'image_encoding',
++        default_value='yuv420',
++        description='Encoding of the camera image'
++    )
++
++    node_name_arg = DeclareLaunchArgument(
++        'node_name',
++        default_value='gscam_publisher',
++        description='Name of the gscam2 node'
++    )
++
++    camera_name_arg = DeclareLaunchArgument(
++        'camera_name',
++        default_value='camera',
++        description='Name of the camera namespace'
++    )
++
++    image_topic_name_arg = DeclareLaunchArgument(
++        'image_topic_name',
++        default_value='image_raw',
++        description='Name of the image topic'
++    )
++
++    # Create the launch description and add the arguments
++    ld  = LaunchDescription()
++    ld.add_action(video_id_arg)
++    ld.add_action(framerate_arg)
++    ld.add_action(image_encoding_arg)
++    ld.add_action(node_name_arg)
++    ld.add_action(camera_name_arg)
++    ld.add_action(image_topic_name_arg)
++    ld.add_action(OpaqueFunction(function=finalize_node))
++
++    return ld
+\ No newline at end of file
+diff --git a/launch/v4l_yuv_launch.py b/launch/v4l_yuv_launch.py
+new file mode 100644
+index 0000000..ddb2c86
+--- /dev/null
++++ b/launch/v4l_yuv_launch.py
+@@ -0,0 +1,114 @@
++"""
++Launch gscam2 node with parameters and remappings.
++"""
++import os
++from ament_index_python.packages import get_package_share_directory
++from launch import LaunchDescription
++from launch.actions import DeclareLaunchArgument
++from launch.substitutions import LaunchConfiguration
++from launch.actions import OpaqueFunction
++from launch_ros.actions import Node
++
++def finalize_node(context, *args, **kwargs):
++
++    # Device
++    device = "/dev/video" + LaunchConfiguration('video_id').perform(context)
++
++    # Framerate
++    framerate = LaunchConfiguration('framerate')
++
++    # Image encoding: "yuv420" - publishes in "NV12" (default), "rgb8"
++    image_encoding = LaunchConfiguration('image_encoding')
++
++    # Name of the gscam2 node
++    node_name = LaunchConfiguration('node_name')
++
++    # GStreamer pipeline specified in gscam_config was tested with Logitech C920 webcam in YUYV mode.
++    # Assumes 'edgeai-tiovx-modules' and 'edgeai-gst-plugins' are already installed in TDA4 ROS container.
++    gscam_config = 'v4l2src device=' + device + ' io-mode=0 do-timestamp=true ! tiovxdlcolorconvert'
++
++    # Camera namespace
++    camera_name = LaunchConfiguration('camera_name').perform(context)
++    image_topic_name = LaunchConfiguration('image_topic_name').perform(context)
++
++    # Camera calibration file
++    config_dir = os.path.join(get_package_share_directory('gscam2'), 'config')
++    camera_config = 'file://' + os.path.join(config_dir, 'C920_HD_camera_info.yaml')
++    print(camera_config)
++
++    node = Node(
++        package    = 'gscam2',
++        executable = 'gscam_main',
++        output     = 'screen',
++        name       = node_name,
++        namespace  = camera_name,
++        parameters = [
++            {
++                'gscam_config':       gscam_config,
++                'camera_name':        camera_name,
++                'image_topic_name':   image_topic_name,
++                'camera_info_url':    camera_config,
++                'image_encoding':     image_encoding,
++                'appsink_width':      1280,
++                'appsink_height':     720,
++                'appsink_framerate':  framerate,
++                'sync_sink':          False,
++                'preroll':            False,
++                'use_gst_timestamps': False,
++                'frame_id':           camera_name,
++            },
++        ],
++    )
++
++    return [node]
++
++
++def generate_launch_description():
++
++    video_id_arg = DeclareLaunchArgument(
++        'video_id',
++        default_value='2',
++        description='ID of the video device to use.'
++    )
++
++    framerate_arg = DeclareLaunchArgument(
++        'framerate',
++        default_value='10',
++        description='Frame rate of the camera'
++    )
++
++    image_encoding_arg = DeclareLaunchArgument(
++        'image_encoding',
++        default_value='yuv420',
++        description='Encoding of the camera image'
++    )
++
++    node_name_arg = DeclareLaunchArgument(
++        'node_name',
++        default_value='gscam_publisher',
++        description='Name of the gscam2 node'
++    )
++
++    camera_name_arg = DeclareLaunchArgument(
++        'camera_name',
++        default_value='camera',
++        description='Name of the camera namespace'
++    )
++
++    image_topic_name_arg = DeclareLaunchArgument(
++        'image_topic_name',
++        default_value='image_raw',
++        description='Name of the image topic'
++    )
++
++    # Create the launch description and add the arguments
++    ld  = LaunchDescription()
++    ld.add_action(video_id_arg)
++    ld.add_action(framerate_arg)
++    ld.add_action(image_encoding_arg)
++    ld.add_action(node_name_arg)
++    ld.add_action(camera_name_arg)
++    ld.add_action(image_topic_name_arg)
++    ld.add_action(OpaqueFunction(function=finalize_node))
++
++    return ld
+\ No newline at end of file
+diff --git a/src/gscam_node.cpp b/src/gscam_node.cpp
+index 3fef91f..5590953 100644
+--- a/src/gscam_node.cpp
++++ b/src/gscam_node.cpp
+@@ -26,7 +26,11 @@ namespace gscam2
+   CXT_MACRO_MEMBER(image_encoding, std::string, sensor_msgs::image_encodings::RGB8) /*   */ \
+   CXT_MACRO_MEMBER(camera_info_url, std::string, "")        /* Location of camera info file  */ \
+   CXT_MACRO_MEMBER(camera_name, std::string, "")            /* Camera name  */ \
+-  CXT_MACRO_MEMBER(frame_id, std::string, "camera_frame")   /* Camera frame id  */ \
++  CXT_MACRO_MEMBER(frame_id, std::string, "camera")         /* Camera frame id  */ \
++  CXT_MACRO_MEMBER(appsink_width, int, 1280)                /* app_sink: width */ \
++  CXT_MACRO_MEMBER(appsink_height, int, 720)                /* app_sink: height */ \
++  CXT_MACRO_MEMBER(appsink_framerate, int, 30)              /* app_sink: set_framerate */ \
++  CXT_MACRO_MEMBER(image_topic_name, std::string, "image_raw") /* Name of image topic */ \
+   /* End of list */
+ 
+ #undef CXT_MACRO_MEMBER
+@@ -63,6 +67,9 @@ namespace gscam2
+     // Discover width and height from the incoming data
+     int width_, height_;
+ 
++    // app_sink format to set, based on image_encoding
++    std::string app_sink_format_;
++
+     // Calibration between ros::Time and gst timestamps
+     GstClockTime time_offset_;
+ 
+@@ -141,16 +148,17 @@ namespace gscam2
+     GstCaps *caps = gst_app_sink_get_caps(GST_APP_SINK(sink_));
+ 
+     // http://gstreamer.freedesktop.org/data/doc/gstreamer/head/pwg/html/section-types-definitions.html
+-    if (cxt_.image_encoding_ == sensor_msgs::image_encodings::RGB8) {
+-      caps = gst_caps_new_simple("video/x-raw",
+-                                 "format", G_TYPE_STRING, "RGB",
+-                                 nullptr);
+-    } else if (cxt_.image_encoding_ == sensor_msgs::image_encodings::MONO8) {
+-      caps = gst_caps_new_simple("video/x-raw",
+-                                 "format", G_TYPE_STRING, "GRAY8",
+-                                 nullptr);
+-    } else if (cxt_.image_encoding_ == "jpeg") {
+-      caps = gst_caps_new_simple("image/jpeg", nullptr, nullptr);
++    if (cxt_.image_encoding_ == "jpeg") {
++      caps = gst_caps_new_simple("image/jpeg", NULL, NULL);
++    }
++    else {
++      caps = gst_caps_new_simple( "video/x-raw",
++          "format", G_TYPE_STRING, app_sink_format_.c_str(),
++          "framerate", GST_TYPE_FRACTION, cxt_.appsink_framerate_, 1,
++          "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1,
++          "width", G_TYPE_INT, cxt_.appsink_width_,
++          "height", G_TYPE_INT, cxt_.appsink_height_,
++          NULL);
+     }
+ 
+     gst_app_sink_set_caps(GST_APP_SINK(sink_), caps);
+@@ -217,9 +225,9 @@ namespace gscam2
+ 
+     cinfo_pub_ = node_->create_publisher<sensor_msgs::msg::CameraInfo>("camera_info", 1);
+     if (cxt_.image_encoding_ == "jpeg") {
+-      jpeg_pub_ = node_->create_publisher<sensor_msgs::msg::CompressedImage>("image_raw/compressed", 1);
++      jpeg_pub_ = node_->create_publisher<sensor_msgs::msg::CompressedImage>(cxt_.image_topic_name_+"/compressed", 1);
+     } else {
+-      camera_pub_ = node_->create_publisher<sensor_msgs::msg::Image>("image_raw", 1);
++      camera_pub_ = node_->create_publisher<sensor_msgs::msg::Image>(cxt_.image_topic_name_, 1);
+     }
+ 
+     // Pre-roll camera if needed
+@@ -324,14 +332,20 @@ namespace gscam2
+       cinfo_pub_->publish(std::move(cinfo));
+     } else {
+       // Complain if the returned buffer is smaller than we expect
+-      const unsigned int expected_frame_size =
+-        cxt_.image_encoding_ == sensor_msgs::image_encodings::RGB8
+-        ? width_ * height_ * 3
+-        : width_ * height_;
++      unsigned int expected_frame_size;
++      if (cxt_.image_encoding_ == sensor_msgs::image_encodings::RGB8) {
++          expected_frame_size = width_ * height_ * 3;
++      }
++      else if (cxt_.image_encoding_ == "yuv420") {
++          expected_frame_size = width_ * height_ * 1.5;
++      }
++      else {
++          expected_frame_size = width_ * height_;
++      }
+ 
+       if (buf_size < expected_frame_size) {
+         RCLCPP_WARN(node_->get_logger(),
+-                    "Image buffer underflow: expected frame to be %d bytes but got only %d"
++                    "Image buffer underflow: expected frame to be %d bytes but got only %lu"
+                     " bytes (make sure frames are correctly encoded)", expected_frame_size, (buf_size));
+       }
+ 
+@@ -349,10 +363,13 @@ namespace gscam2
+ 
+       // Copy the image, so we can free the buffer allocated by gstreamer
+       if (cxt_.image_encoding_ == sensor_msgs::image_encodings::RGB8) {
+-        img->step = width_ * 3;
++          img->step = width_ * 3;
++      } else if (cxt_.image_encoding_ == "yuv420") { // NV12
++          img->step = width_ * 1.5;
+       } else {
+-        img->step = width_;
++          img->step = width_;
+       }
++
+       std::copy(
+         buf_data,
+         (buf_data) + (buf_size),
+@@ -400,12 +417,23 @@ namespace gscam2
+     }
+ 
+     if (cxt_.image_encoding_ != sensor_msgs::image_encodings::RGB8 &&
+-        cxt_.image_encoding_ != sensor_msgs::image_encodings::MONO8 &&
++        // cxt_.image_encoding_ != sensor_msgs::image_encodings::MONO8 &&
++        cxt_.image_encoding_ != "yuv420" &&
+         cxt_.image_encoding_ != "jpeg") {
+       RCLCPP_FATAL(node_->get_logger(), "Unsupported image encoding: %s", cxt_.image_encoding_.c_str());
+       return;
+     }
+ 
++    // Mapping between image_encoding_ and app_sink_format_
++    // 'tiovxcolorconvert' supports: RGB, NV12
++    if (cxt_.image_encoding_ == sensor_msgs::image_encodings::RGB8) {
++      app_sink_format_ = "RGB";
++    } else if (cxt_.image_encoding_ == "yuv420") {
++      app_sink_format_ = "NV12";
++    } else if (cxt_.image_encoding_ == "jpeg") {
++      app_sink_format_ = "";
++    }
++
+     camera_info_manager_.setCameraName(cxt_.camera_name_);
+ 
+     if (camera_info_manager_.validateURL(cxt_.camera_info_url_)) {
