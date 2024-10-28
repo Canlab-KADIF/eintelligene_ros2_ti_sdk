@@ -76,7 +76,29 @@ VisionCnnNode::VisionCnnNode(const rclcpp::NodeOptions &options,
 
 void VisionCnnNode::subscriberThread()
 {
-  
+    std::string topicName;
+    bool        status;
+
+    // Query the topicname to subscribe to
+    status = get_parameter("input_topic_name", topicName);
+
+    if (status == false)
+    {
+        RCLCPP_INFO(get_logger(), "Config parameter 'input_topic_name' not found.");
+        exit(-1);
+    }
+
+    m_sub = new ImgSub(this, topicName);
+
+    if (m_sub == nullptr)
+    {
+        RCLCPP_ERROR(get_logger(), "new ImgSub() failed.");
+        exit(-1);
+    }
+
+    m_conObj = m_sub->registerCallback(&VisionCnnNode::imgCb, this);
+
+    RCLCPP_INFO(get_logger(), "Subscribed to the topic: %s", topicName.c_str());
 }
 
 void VisionCnnNode::publisherThread()
