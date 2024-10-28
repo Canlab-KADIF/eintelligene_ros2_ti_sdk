@@ -88,6 +88,14 @@ using namespace common_msgs::msg;
 
 class VisionCnnNode: public rclcpp::Node
 {
+    using ImgSub   = message_filters::Subscriber<Image>;
+    using ImgPub   = image_transport::Publisher;
+    using ImgTrans = image_transport::ImageTransport;
+    using SubCon   = message_filters::Connection;
+    using DetPub   = rclcpp::Publisher<Detection2D>::SharedPtr;
+    using PosePub  = rclcpp::Publisher<Pose6D>::SharedPtr;
+    using HumanPosePub  = rclcpp::Publisher<HumanPose>::SharedPtr;
+
     public:
         VisionCnnNode(const rclcpp::NodeOptions    &options,
                       const std::string            &name="vision_cnn");
@@ -96,11 +104,31 @@ class VisionCnnNode: public rclcpp::Node
 
     private:
         vx_status init();
+        void readParams();
+        void imgCb(const Image::ConstSharedPtr& imgPtr);
         void subscriberThread();
         void publisherThread();
+        void processCompleteEvtHdlr();
 
     private:
-  
+        VISION_CNN_Context     *m_cntxt{};
+        ImgSub                 *m_sub{};
+        ImgTrans               *m_imgTrans{};
+        SubCon                  m_conObj;
+        ImgPub                  m_rectImgPub;
+        ImgPub                  m_outTensorPub;
+        DetPub                  m_odPub;
+        PosePub                 m_posePub;
+        HumanPosePub            m_human_posePub;
+        uint32_t                m_inputImgWidth;
+        uint32_t                m_inputImgHeight;
+        uint32_t                m_outImgWidth;
+        uint32_t                m_outImgHeight;
+        Image                   m_outTensorPubData;
+        Image                   m_rectImagePubData;
+        uint32_t                m_rectImageSize;
+        uint32_t                m_outTensorSize;
+        std::string             m_taskType;
 };
 
 #endif /* _APP_VISION_CNN_NODE_H_ */
