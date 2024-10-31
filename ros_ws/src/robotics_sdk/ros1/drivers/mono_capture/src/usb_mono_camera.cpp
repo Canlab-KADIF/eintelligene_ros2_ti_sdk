@@ -95,7 +95,7 @@ MonoCamera::MonoCamera(const std::string device_name,
     setCameraMode(camera_mode);
     setFrameRate(frame_rate);
 
-#if CV_MAJOR_VERSION <= 3
+#if 0
     if (encoding_.compare("yuv422")==0)
     {
         camera_->set(CV_CAP_PROP_CONVERT_RGB, false);
