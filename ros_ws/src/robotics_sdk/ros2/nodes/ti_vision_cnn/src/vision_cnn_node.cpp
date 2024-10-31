@@ -66,6 +66,10 @@
 
 #include <vision_cnn_node.h>
 
+#define data_header 1090
+#define default_img_w 1080
+#define default_img_h 960
+
 VisionCnnNode::VisionCnnNode(const rclcpp::NodeOptions &options,
                              const std::string         &name):
     Node(name, options)
