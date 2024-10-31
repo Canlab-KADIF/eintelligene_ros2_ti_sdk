@@ -103,6 +103,8 @@ int main(int argc, char **argv)
          */
         nodeOptions.use_intra_process_comms(false);
 
+    
+
         auto visCnnNode = std::make_shared<VisionCnnNode>(nodeOptions);
 
         if (visCnnNode !=0 ){
