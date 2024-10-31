@@ -158,6 +158,9 @@ void VisionCnnNode::publisherThread()
     m_rectImagePubData.height   = m_inputImgHeight;
     m_rectImagePubData.step     = m_inputImgWidth;
     m_rectImagePubData.encoding = "yuv420";
+    //m_rectImagePubData.encoding = "yuv444";
+    //m_rectImagePubData.encoding = "yuv420sp";
+    //m_rectImagePubData.encoding = "gray8";
     m_rectImagePubData.header.frame_id = rectImgFrame;
 
     // Create the publisher for the rectified image
