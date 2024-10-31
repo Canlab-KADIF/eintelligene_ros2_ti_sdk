@@ -99,10 +99,10 @@ void ObjdetRadarFusion::callback_CameraInfo(
     // set the distortion params to all zeros for rectified images
     std::fill(m_cameraInfo_rect.d.begin(), m_cameraInfo_rect.d.end(), 0.0);
 
-    // RCLCPP_INFO(this->get_logger(), "callback_CameraInfo: camera_info: K = [%f, %f, %f, %f, %f, %f, %f, %f, %f]",
-    //     m_cameraInfo_rect.k[0], m_cameraInfo_rect.k[1], m_cameraInfo_rect.k[2],
-    //     m_cameraInfo_rect.k[3], m_cameraInfo_rect.k[4], m_cameraInfo_rect.k[5],
-    //     m_cameraInfo_rect.k[6], m_cameraInfo_rect.k[7], m_cameraInfo_rect.k[8]);
+    RCLCPP_INFO(this->get_logger(), "callback_CameraInfo: camera_info: K = [%f, %f, %f, %f, %f, %f, %f, %f, %f]",
+        m_cameraInfo_rect.k[0], m_cameraInfo_rect.k[1], m_cameraInfo_rect.k[2],
+        m_cameraInfo_rect.k[3], m_cameraInfo_rect.k[4], m_cameraInfo_rect.k[5],
+        m_cameraInfo_rect.k[6], m_cameraInfo_rect.k[7], m_cameraInfo_rect.k[8]);
 
     if (m_cameraInfo_rect.k[0] == 0.0)
     {

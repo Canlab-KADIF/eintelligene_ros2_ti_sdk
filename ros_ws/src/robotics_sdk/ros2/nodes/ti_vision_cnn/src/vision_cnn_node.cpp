@@ -66,6 +66,10 @@
 
 #include <vision_cnn_node.h>
 
+#define data_header 1090
+#define default_img_w 1080
+#define default_img_h 960
+
 VisionCnnNode::VisionCnnNode(const rclcpp::NodeOptions &options,
                              const std::string         &name):
     Node(name, options)
@@ -154,6 +158,9 @@ void VisionCnnNode::publisherThread()
     m_rectImagePubData.height   = m_inputImgHeight;
     m_rectImagePubData.step     = m_inputImgWidth;
     m_rectImagePubData.encoding = "yuv420";
+    //m_rectImagePubData.encoding = "yuv444";
+    //m_rectImagePubData.encoding = "yuv420sp";
+    //m_rectImagePubData.encoding = "gray8";
     m_rectImagePubData.header.frame_id = rectImgFrame;
 
     // Create the publisher for the rectified image
@@ -193,6 +200,20 @@ void VisionCnnNode::publisherThread()
     {
         // Create the publisher for the rectified image
         m_odPub = this->create_publisher<Detection2D>(outTensorTopic, 1);
+    }else if (m_taskType == "etc1") //etc1 adding
+    {
+        // Create the publisher for the rectified image
+        m_odPub = this->create_publisher<Detection2D>(outTensorTopic, 1);
+    }else if (m_taskType == "etc2") //etc2 adding
+    {
+        // Create the publisher for the rectified image
+        m_odPub = this->create_publisher<Detection2D>(outTensorTopic, 1);
+        RCLCPP_ERROR(get_logger(), "test 2");
+    }else if (m_taskType == "etc3") //etc3 adding
+    {
+        // Create the publisher for the rectified image
+        m_odPub = this->create_publisher<Detection2D>(outTensorTopic, 1);
+        RCLCPP_ERROR(get_logger(), "test3");
     }
     else
     {
