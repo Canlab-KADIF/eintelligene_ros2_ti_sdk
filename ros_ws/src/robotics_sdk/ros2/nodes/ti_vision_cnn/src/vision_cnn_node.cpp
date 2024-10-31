@@ -208,10 +208,12 @@ void VisionCnnNode::publisherThread()
     {
         // Create the publisher for the rectified image
         m_odPub = this->create_publisher<Detection2D>(outTensorTopic, 1);
+        RCLCPP_ERROR(get_logger(), "test 2");
     }else if (m_taskType == "etc3") //etc3 adding
     {
         // Create the publisher for the rectified image
         m_odPub = this->create_publisher<Detection2D>(outTensorTopic, 1);
+        RCLCPP_ERROR(get_logger(), "test3");
     }
     else
     {
