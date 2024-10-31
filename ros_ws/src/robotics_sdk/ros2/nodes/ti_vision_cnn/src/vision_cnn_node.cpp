@@ -200,6 +200,10 @@ void VisionCnnNode::publisherThread()
     {
         // Create the publisher for the rectified image
         m_odPub = this->create_publisher<Detection2D>(outTensorTopic, 1);
+    }else if (m_taskType == "etc1") //etc1 adding
+    {
+        // Create the publisher for the rectified image
+        m_odPub = this->create_publisher<Detection2D>(outTensorTopic, 1);
     }
     else
     {
