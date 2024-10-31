@@ -105,6 +105,10 @@ int main(int argc, char **argv)
 
         auto visCnnNode = std::make_shared<VisionCnnNode>(nodeOptions);
 
+        if (visCnnNode !=0 ){
+            printf("cnn node error ! \n");
+        }
+
         rclcpp::spin(visCnnNode);
 
         rclcpp::shutdown();
