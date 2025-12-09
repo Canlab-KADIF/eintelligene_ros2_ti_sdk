@@ -1,1 +1,2 @@
 v0.2 - feature A start
+v0.2 - feature A logic implemented
