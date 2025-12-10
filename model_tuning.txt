@@ -3,3 +3,4 @@ model tuning v0.2 #2
 model tuning v0.2 #3
 test for v0.6
 apply change parameters to model
+fix loss
