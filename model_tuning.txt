@@ -5,3 +5,4 @@ test for v0.6
 apply change parameters to model
 fix loss
 learning rate
+combine pipeline
