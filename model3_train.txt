@@ -1,1 +1,2 @@
 model3 training code
+model3 loss function
