@@ -1,2 +1,3 @@
 Release v0.1 notes
 Update change log for v0.3
+v0.4 release notes
